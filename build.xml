@@ -66,6 +66,12 @@
         <attribute name="Main-Class" value="baldrickv.s3streamingtool.S3StreamingDownload"/>
       </manifest>
 	</jar>
+  	<jar destfile="${jar}/S3CleanupMultipart-${version}.jar" basedir="build">
+	  <zipgroupfileset dir="${lib}" includes="*.jar" excludes=""/>
+	  <manifest>
+        <attribute name="Main-Class" value="baldrickv.s3streamingtool.S3CleanupMultipart"/>
+      </manifest>
+	</jar>
   	<jar destfile="${jar}/S3StreamingTool-${version}.jar" basedir="build">
 	</jar>
 </target>
