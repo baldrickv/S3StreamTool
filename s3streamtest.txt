@@ -1,0 +1,3 @@
+aws_id=
+aws_secret=
+test_bucket=
