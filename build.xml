@@ -2,6 +2,7 @@
  
   <property name="build.compiler" value="modern" />
   <property name="src" value="./src" />
+  <property name="jar" value="./jar" />
   <property name="build" value="./build" />
   <property name="test" value="./test" />
   <property name="build_test" value="./build_test" />
@@ -50,10 +51,28 @@
     </javac>
   </target>
 
+  <target name="jar" depends="build">
+    <mkdir dir="${jar}"/>
+	<jar destfile="${jar}/S3Upload.jar" basedir="build">
+	  <zipgroupfileset dir="${lib}" includes="*.jar" excludes=""/>
+	  <manifest>
+        <attribute name="Main-Class" value="baldrickv.s3streamingtool.S3StreamingUpload"/>
+      </manifest>
+	</jar>
+ 	<jar destfile="${jar}/S3Download.jar" basedir="build">
+	  <zipgroupfileset dir="${lib}" includes="*.jar" excludes=""/>
+	  <manifest>
+        <attribute name="Main-Class" value="baldrickv.s3streamingtool.S3StreamingDownload"/>
+      </manifest>
+	</jar>
+  	<jar destfile="${jar}/S3StreamingTool.jar" basedir="build">
+	</jar>
+</target>
 
   <target name="clean">
     <delete dir="${build}"/>
     <delete dir="${build_test}"/>
+    <delete dir="${jar}"/>
   </target>
 
 </project>
