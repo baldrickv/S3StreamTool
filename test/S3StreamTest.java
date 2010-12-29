@@ -39,6 +39,9 @@ import javax.crypto.spec.SecretKeySpec;
 import com.amazonaws.auth.AWSCredentials;
 import com.amazonaws.auth.BasicAWSCredentials;
 
+import com.amazonaws.services.s3.AmazonS3Client;
+
+import baldrickv.s3streamingtool.S3StreamConfig;
 import baldrickv.s3streamingtool.S3StreamingDownload;
 import baldrickv.s3streamingtool.S3StreamingUpload;
 import baldrickv.s3streamingtool.Hash;
@@ -120,8 +123,14 @@ public class S3StreamTest
 	
 
 
-
 	private void testRandomSize(String name, int data_size, int write_size, int read_size)
+		throws Exception
+	{
+		testRandomSize(name, data_size, write_size, read_size, true);
+		testRandomSize(name, data_size, write_size, read_size, false);
+	}
+
+	private void testRandomSize(String name, int data_size, int write_size, int read_size, boolean encrypted)
 		throws Exception
 	{
 		System.out.println(name);
@@ -130,13 +139,26 @@ public class S3StreamTest
 
 		rnd.nextBytes(input);
 
+		S3StreamConfig config = new S3StreamConfig();
 		ByteArrayInputStream in = new ByteArrayInputStream(input);
 
-		S3StreamingUpload.upload(in, bucket, "test/" + name, write_size, secret_key, creds);
+		config.setInputStream(in);
+		config.setS3Bucket(bucket);
+		config.setS3File("test/" + name);
+		config.setBlockSize(write_size);
+		config.setEncryption(encrypted);
+		config.setS3Client(new AmazonS3Client(creds));
+		config.setSecretKey(secret_key);
 
+
+		S3StreamingUpload.upload(config);
+		
 		ByteArrayOutputStream out = new ByteArrayOutputStream();
+		config.setOutputStream(out);
+		config.setBlockSize(read_size);
 
-		S3StreamingDownload.download(out, bucket, "test/" + name, read_size, secret_key, creds);
+
+		S3StreamingDownload.download(config);
 
 		byte[] output = out.toByteArray();
 

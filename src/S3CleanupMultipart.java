@@ -65,8 +65,19 @@ public class S3CleanupMultipart
 	public static void cleanup(String bucket, AWSCredentials creds)
 		throws Exception
 	{
+		S3StreamConfig config = new S3StreamConfig();
+		config.setS3Bucket(bucket);
+		config.setS3Client(new AmazonS3Client(creds));
 
-        AmazonS3Client s3 = new AmazonS3Client(creds);
+		cleanup(config);
+	}
+	
+	public static void cleanup(S3StreamConfig config)
+		throws Exception
+	{
+
+        AmazonS3Client s3 = config.getS3Client();
+		String bucket = config.getS3Bucket();
 
 		ListMultipartUploadsRequest list_req = new ListMultipartUploadsRequest(bucket);
 

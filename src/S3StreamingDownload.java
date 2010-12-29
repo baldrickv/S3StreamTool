@@ -49,6 +49,7 @@ import java.util.LinkedList;
 
 public class S3StreamingDownload
 {
+	protected static Logger log = Logger.getLogger(S3StreamingDownload.class.getName());
 
     public static void main(String args[])
 		throws Exception
@@ -66,6 +67,7 @@ public class S3StreamingDownload
 		String aws_creds_path = args[4];
 
         Logger.getLogger("").setLevel(Level.WARNING);
+ 		log.setLevel(Level.FINE);
 
         Key secret_key = Utils.loadSecretKey(key_path);
         AWSCredentials creds = Utils.loadAWSCredentails(aws_creds_path);
@@ -92,6 +94,7 @@ public class S3StreamingDownload
 		throws Exception
 	{
 
+   		long start_time = System.currentTimeMillis();
 
 		Cipher cipher = null;
 		Key secret_key = null;
@@ -149,7 +152,7 @@ public class S3StreamingDownload
 			threads.add(t);
 		}
 
-
+		long total_size = 0;
 
 		boolean first_block=true;
 
@@ -180,6 +183,7 @@ public class S3StreamingDownload
 
 			if (plain != null)
 			{
+				total_size += plain.length;
 				out.write(plain);
 				out.flush();
 			}
@@ -194,6 +198,7 @@ public class S3StreamingDownload
 
 			if (plain != null)
 			{
+				total_size += plain.length;
 				out.write(plain);
 				out.flush();
 			}
@@ -205,6 +210,15 @@ public class S3StreamingDownload
 			t.join();
 		}
 
+   		long end_time = System.currentTimeMillis();
+
+		double seconds = (double)(end_time - start_time)/1000.0;
+		double rate = (double)total_size / seconds;
+		double rate_kb = rate / 1024.0;
+		DecimalFormat df = new DecimalFormat("0.00");
+
+		log.info("Downloaded " + total_size + " at rate of " + df.format(rate_kb) + " kB/s");
+	
 	}
 
 
@@ -215,10 +229,12 @@ public class S3StreamingDownload
 	 */
 	protected static byte[] get(AmazonS3Client s3, String bucket, String file, long start, long end) 
 	{
+        long t1 = System.nanoTime();
 		while(true)
 		{
 			try
 			{
+				log.log(Level.FINE, "Started " + file + " " + start + " " + end);
 
 				GetObjectRequest req = new GetObjectRequest(bucket, file);
 
@@ -232,11 +248,24 @@ public class S3StreamingDownload
 				din.readFully(b);
 				din.close();
 
+
+		        long t2 = System.nanoTime();
+
+		        double seconds = (double)(t2 - t1) / 1000000.0 / 1000.0;
+        		double rate = (double)len / seconds / 1024.0;
+
+		        DecimalFormat df = new DecimalFormat("0.00");
+
+        		log.log(Level.FINE,file + " " + start + " " + end  + " size: " + len + " in " + df.format(seconds) + " sec, " + df.format(rate) + " kB/s");
+
 				return b;
+
+
+
 			}
 			catch(Throwable t)
 			{
-				t.printStackTrace();
+				log.log(Level.WARNING, "Error in download", t);
 				try{Thread.sleep(5000);}catch(Exception e){}
 			}
 		}

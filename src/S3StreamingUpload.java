@@ -50,6 +50,8 @@ import java.util.logging.Level;
 
 public class S3StreamingUpload
 {
+	protected static Logger log = Logger.getLogger(S3StreamingUpload.class.getName());
+
 
     public static void main(String args[])
 		throws Exception
@@ -67,6 +69,8 @@ public class S3StreamingUpload
 		String aws_creds_path = args[4];
 
 		Logger.getLogger("").setLevel(Level.WARNING);
+		Logger.getLogger(Logger.GLOBAL_LOGGER_NAME).setLevel(Level.INFO);
+		log.setLevel(Level.INFO);
 
 		Key secret_key = Utils.loadSecretKey(key_path);
 		AWSCredentials creds = Utils.loadAWSCredentails(aws_creds_path);
@@ -95,6 +99,8 @@ public class S3StreamingUpload
 		throws Exception
 	{
 		
+		long start_time = System.currentTimeMillis();
+
 		InputStream in = config.getInputStream();
 
 		Random rnd = new Random();
@@ -121,6 +127,14 @@ public class S3StreamingUpload
 			rnd.nextBytes(iv);
 			IvParameterSpec iv_spec = new IvParameterSpec(iv);
 			cipher.init(Cipher.ENCRYPT_MODE, secret_key, iv_spec);
+		}
+
+		if (block_size < 5242880)
+		{
+			log.severe("Block size set to " + block_size + ". S3 will likely reject multipart uploads of block size less than 5MB (5242880)");
+			log.severe("Unless they have changed their policy this upload will fail at the final completeMultipartUpload step");
+			log.severe("Unless upload fits in one block, in which case it will be fine");
+			
 		}
 
 		boolean first_block = true;
@@ -150,6 +164,7 @@ public class S3StreamingUpload
 			t.start();
 			threads.add(t);
 		}
+		long total_size = 0;
 
 
 		while(!last_block)
@@ -162,6 +177,8 @@ public class S3StreamingUpload
 				next_block_size -= iv.length;
 			}
 			byte[] plain = readNextBlock(in, next_block_size);
+
+			total_size += plain.length;
 
 			byte[] out = null;
 
@@ -218,17 +235,25 @@ public class S3StreamingUpload
 			parts.add(part);
 		}
 
-		CompleteMultipartUploadRequest complete_req = new CompleteMultipartUploadRequest(bucket, file, upload_id, parts);
-		String etag = config.getS3Client().completeMultipartUpload(complete_req).getETag();
-
-		System.out.println("Uploaded with etag: " + etag);
-
 		for(S3StreamingUploadThread t : threads)
 		{
 			t.interrupt();
 			t.join();
 		}
 
+		CompleteMultipartUploadRequest complete_req = new CompleteMultipartUploadRequest(bucket, file, upload_id, parts);
+		String etag = config.getS3Client().completeMultipartUpload(complete_req).getETag();
+
+		log.info("Uploaded " + bucket + " " + file + " with etag " + etag); 
+
+   		long end_time = System.currentTimeMillis();
+
+		double seconds = (double)(end_time - start_time)/1000.0;
+		double rate = (double)total_size / seconds;
+		double rate_kb = rate / 1024.0;
+		DecimalFormat df = new DecimalFormat("0.00");
+
+		log.info("Uploaded " + total_size + " at rate of " + df.format(rate_kb) + " kB/s");
 		
 
 	}
@@ -261,6 +286,8 @@ public class S3StreamingUpload
 
     protected static PartETag put(AmazonS3Client s3, String bucket, String name, String upload_id, int block_no, byte[] out)
     {  
+		log.log(Level.FINE, "Started " + name + "-" + block_no);
+
 		int size = out.length;
 
 		UploadPartRequest req = new UploadPartRequest();
@@ -305,7 +332,8 @@ public class S3StreamingUpload
         double rate = (double)size / seconds / 1024.0;
 
         DecimalFormat df = new DecimalFormat("0.00");
-        System.out.println(name + "-" + block_no + " size: " + size + " in " + df.format(seconds) + " sec, " + df.format(rate) + " kB/s");
+
+		log.log(Level.FINE,name + "-" + block_no + " size: " + size + " in " + df.format(seconds) + " sec, " + df.format(rate) + " kB/s");
 
 		return tag;
 

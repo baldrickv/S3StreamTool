@@ -26,9 +26,12 @@ package baldrickv.s3streamingtool;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.Semaphore;
 
+import java.util.logging.Logger;
 
 class S3StreamingDownloadThread extends Thread
 {
+	private static Logger log = Logger.getLogger(S3StreamingDownload.class.getName());
+
 	private S3StreamConfig config;
 	private Semaphore read_allow;
 	private BlockWeaver<DataBlock> weaver;
@@ -54,6 +57,7 @@ class S3StreamingDownloadThread extends Thread
 	{
 		while(true)
 		{
+			
 			try
 			{
 				read_allow.acquire();
@@ -64,12 +68,16 @@ class S3StreamingDownloadThread extends Thread
 				
 				data = S3StreamingDownload.get(config.getS3Client(), config.getS3Bucket(), config.getS3File(), req.start, req.end);
 
+
 				DataBlock db = new DataBlock(req.block_no, data);
 				weaver.addBlock(req.block_no, db);
+
+
 
 			}
 			catch(InterruptedException e)
 			{
+				
 				return;
 			}
 

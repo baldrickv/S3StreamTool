@@ -33,16 +33,21 @@ import com.amazonaws.services.s3.AmazonS3Client;
 
 public class S3StreamConfig
 {
+	public static final int DEFAULT_BLOCK_MB =100; //100mb
+	public static final int DEFAULT_IO_THREADS = 2;
+	public static final String DEFAULT_ENCRYPTION_MODE = "AES/CBC/PKCS5PADDING";
+
+
 	private AmazonS3Client s3_client;
 	private String s3_bucket;
 	private String s3_file;
 
 	private boolean encryption=false;
-	private String encryption_mode="AES/CBC/PKCS5PADDING";
+	private String encryption_mode= DEFAULT_ENCRYPTION_MODE;
 	private Key secret_key;
 
-	private int block_size=104857600; //100mb
-	private int io_threads=2;
+	private int block_size=DEFAULT_BLOCK_MB * 1048576;
+	private int io_threads=DEFAULT_IO_THREADS;
 
 	private InputStream source; //Only applies to upload
 	private OutputStream destination; //Only applies to download
@@ -51,7 +56,7 @@ public class S3StreamConfig
 	public void setS3Bucket(String s){s3_bucket = s;}
 	public void setS3File(String s){s3_file = s;}
 	public void setEncryption(boolean e){encryption = e;}
-	public void setEncrypotionMode(String m){encryption_mode = m;}
+	public void setEncryptionMode(String m){encryption_mode = m;}
 	public void setSecretKey(Key k){secret_key = k;}
 	public void setBlockSize(int z){block_size = z;}
 	public void setIOThreads(int n){io_threads = n;}
