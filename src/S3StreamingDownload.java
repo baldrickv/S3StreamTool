@@ -35,6 +35,9 @@ import java.io.DataInputStream;
 import java.io.OutputStream;
 import java.text.DecimalFormat;
 
+import java.util.concurrent.Semaphore;
+import java.util.concurrent.LinkedBlockingQueue;
+
 import javax.crypto.Cipher;
 import java.security.Key;
 import javax.crypto.spec.IvParameterSpec;
@@ -42,6 +45,7 @@ import java.nio.ByteBuffer;
 
 import java.util.logging.Logger;
 import java.util.logging.Level;
+import java.util.LinkedList;
 
 public class S3StreamingDownload
 {
@@ -68,44 +72,99 @@ public class S3StreamingDownload
 
 		download(System.out, bucket, file, block_size, secret_key, creds);
 
-
-
     }
 
 	public static void download(OutputStream out, String bucket, String file, int block_size, Key secret_key, AWSCredentials creds)
 		throws Exception
 	{
+		S3StreamConfig config = new S3StreamConfig();
+		config.setOutputStream(out);
+		config.setS3Bucket(bucket);
+		config.setS3File(file);
+		config.setBlockSize(block_size);
+		config.setSecretKey(secret_key);
+		config.setEncryption(true);
+		config.setS3Client(new AmazonS3Client(creds));
 
-        AmazonS3Client s3 = new AmazonS3Client(creds);
+		download(config);
+	}
+	public static void download(S3StreamConfig config)
+		throws Exception
+	{
 
-		Cipher cipher = Cipher.getInstance("AES/CBC/PKCS5PADDING");
 
-		int key_size = secret_key.getEncoded().length;
+		Cipher cipher = null;
+		Key secret_key = null;
+		int block_size = config.getBlockSize();
+		OutputStream out = config.getOutputStream();
+
+		if (config.getEncryption())
+		{
+
+			cipher = Cipher.getInstance(config.getEncryptionMode());
+
+			secret_key = config.getSecretKey();
+
+			int key_size = secret_key.getEncoded().length;
 		
-		//There would be some trifling code of the block size wasn't at least the key size
-		block_size = Math.max(block_size, key_size);
+			//There would be some trifling code of the block size wasn't at least the key size
+			block_size = Math.max(block_size, key_size);
+		}
 
 
 		long readOffset=0;
 		long totalLen;
 
-		ObjectMetadata omd = s3.getObjectMetadata(bucket, file);
+		ObjectMetadata omd = config.getS3Client().getObjectMetadata(config.getS3Bucket(), config.getS3File());
 
 		totalLen = omd.getContentLength();
 		
-		boolean first_block=true;
-
-
+		LinkedBlockingQueue<DownloadRequest> queue = new LinkedBlockingQueue<DownloadRequest>();
+		
+		int block_count = 0;
 		while(readOffset < totalLen)
 		{
 			long start = readOffset;
 			long end = Math.min(totalLen, start + block_size);
 
-			byte[] s3_data = get(s3, bucket, file, start, end);
+			DownloadRequest dr = new DownloadRequest();
+			dr.block_no = block_count;
+			dr.start = start;
+			dr.end = end;
+			queue.put(dr);
+
+			block_count++;
+
+			readOffset += (end - start);
+		}
+
+		LinkedList<S3StreamingDownloadThread> threads = new LinkedList<S3StreamingDownloadThread>();
+		Semaphore read_allow = new Semaphore(config.getIOThreads());
+		BlockWeaver<DataBlock> weaver = new BlockWeaver<DataBlock>();
+
+		for(int i=0; i<config.getIOThreads(); i++)
+		{
+			S3StreamingDownloadThread t = new S3StreamingDownloadThread(config, read_allow, weaver, queue);
+			t.start();
+			threads.add(t);
+		}
+
+
+
+		boolean first_block=true;
+
+		for(int block = 0; block < block_count; block++)
+		{
+
+			byte[] s3_data = weaver.getNextBlock().getData();
 
 			byte[] plain;
 
-			if (first_block)
+			if (cipher==null)
+			{
+				plain = s3_data;
+			}
+			else if (first_block)
 			{
 
 				IvParameterSpec iv_spec = new IvParameterSpec(s3_data,0,16);
@@ -125,30 +184,36 @@ public class S3StreamingDownload
 				out.flush();
 			}
 
-			readOffset += s3_data.length;
+			read_allow.release();
 
 		}
 
-		byte[] plain = cipher.doFinal();
-
-		if (plain != null)
+		if (cipher != null)
 		{
-			out.write(plain);
-			out.flush();
+			byte[] plain = cipher.doFinal();
+
+			if (plain != null)
+			{
+				out.write(plain);
+				out.flush();
+			}
 		}
 
+		for(S3StreamingDownloadThread t : threads)
+		{
+			t.interrupt();
+			t.join();
+		}
 
 	}
 
-
-	
 
 	/**
 	 * S3 uses an inclusive range (on both ends).
 	 * This call however uses a more standard, inclusive on the start and exclusive on the end.
 	 * so returns all the bytes X such that (start <= X < end)
 	 */
-	private static byte[] get(AmazonS3Client s3, String bucket, String file, long start, long end) 
+	protected static byte[] get(AmazonS3Client s3, String bucket, String file, long start, long end) 
 	{
 		while(true)
 		{

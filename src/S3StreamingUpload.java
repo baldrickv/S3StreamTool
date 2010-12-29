@@ -33,6 +33,9 @@ import com.amazonaws.services.s3.AmazonS3Client;
 
 import java.util.Random;
 import java.util.LinkedList;
+import java.util.concurrent.Semaphore;
+import java.util.concurrent.LinkedBlockingQueue;
+
 import java.io.ByteArrayInputStream;
 import java.io.InputStream;
 import java.text.DecimalFormat;
@@ -70,84 +73,161 @@ public class S3StreamingUpload
 
 		upload(System.in, bucket, file, block_size, secret_key, creds);
 
-
-
     }
 
-	public static void upload(InputStream in, String bucket, String file, int block_size, Key secret_key, AWSCredentials creds)
+    public static void upload(InputStream in, String bucket, String file, int block_size, Key secret_key, AWSCredentials creds)
+        throws Exception
+    {   
+        S3StreamConfig config = new S3StreamConfig();
+        config.setInputStream(in);
+        config.setS3Bucket(bucket);
+        config.setS3File(file);
+        config.setBlockSize(block_size);
+        config.setSecretKey(secret_key);
+        config.setEncryption(true);
+        config.setS3Client(new AmazonS3Client(creds));
+
+        upload(config);
+    }
+
+
+	public static void upload(S3StreamConfig config)
 		throws Exception
 	{
-
+		
+		InputStream in = config.getInputStream();
 
 		Random rnd = new Random();
 
-		int key_size = secret_key.getEncoded().length;
+		String bucket = config.getS3Bucket();
+		String file = config.getS3File();
 
+		Cipher cipher = null;
+		int block_size = config.getBlockSize();
 
 		int block_no = 1; //Have to start with 1 for S3 Multipart
 
-		Cipher cipher = Cipher.getInstance("AES/CBC/PKCS5PADDING");
 
-        AmazonS3Client s3 = new AmazonS3Client(creds);
+		byte[] iv=null;
 
-		byte[] iv=new byte[key_size];
-		rnd.nextBytes(iv);
-		IvParameterSpec iv_spec = new IvParameterSpec(iv);
-		cipher.init(Cipher.ENCRYPT_MODE, secret_key, iv_spec);
+		if (config.getEncryption())
+		{
+			Key secret_key = config.getSecretKey();
+
+			int key_size = secret_key.getEncoded().length;
+			cipher = Cipher.getInstance(config.getEncryptionMode());
+
+			iv=new byte[key_size];
+			rnd.nextBytes(iv);
+			IvParameterSpec iv_spec = new IvParameterSpec(iv);
+			cipher.init(Cipher.ENCRYPT_MODE, secret_key, iv_spec);
+		}
 
 		boolean first_block = true;
 		boolean last_block = false;
 
-		LinkedList<PartETag> parts = new LinkedList<PartETag>();
 
 		InitiateMultipartUploadRequest init_req = new InitiateMultipartUploadRequest(bucket, file);
 		
-		String upload_id = s3.initiateMultipartUpload(init_req).getUploadId();
+		String upload_id = config.getS3Client().initiateMultipartUpload(init_req).getUploadId();
+
+		Semaphore read_allow = new Semaphore(config.getIOThreads());
+
+		BlockWeaver<PartETag> etags = new BlockWeaver<PartETag>(1);
+
+		LinkedBlockingQueue<DataBlock> save_queue = new LinkedBlockingQueue<DataBlock>();
+
+
+		LinkedList<S3StreamingUploadThread> threads = new LinkedList<S3StreamingUploadThread>();
+		for(int i=0; i< config.getIOThreads(); i++)
+		{
+			S3StreamingUploadThread t = new S3StreamingUploadThread(
+				upload_id, 
+				config,
+				read_allow,
+				etags,
+				save_queue);
+			t.start();
+			threads.add(t);
+		}
+
 
 		while(!last_block)
 		{
-			byte[] plain = readNextBlock(in, block_size);
+			read_allow.acquire();
 
-			byte[] crypted = null;
-
-			if (plain.length != block_size)
+			int next_block_size = block_size;
+			if ((first_block) && (cipher != null))
 			{
-				last_block = true;
-				crypted = cipher.doFinal(plain);
+				next_block_size -= iv.length;
 			}
-			else
-			{
-				crypted = cipher.update(plain);
-
-			}
-			
+			byte[] plain = readNextBlock(in, next_block_size);
 
 			byte[] out = null;
 
-			if (first_block)
+			if (plain.length != next_block_size)
 			{
+				last_block = true;
+				if (cipher != null)
+				{
+					out = cipher.doFinal(plain);
+				}
+				else
+				{
+					out = plain;
+				}
 
-				out = new byte[iv.length + crypted.length];
-				ByteBuffer bb = ByteBuffer.wrap(out);
-				bb.put(iv);
-				bb.put(crypted);
-				first_block=false;
 			}
 			else
 			{
-				out = crypted;
+				if (cipher != null)
+				{
+					out = cipher.update(plain);
+				}
+				else
+				{
+					out = plain;
+				}
+			}
+			plain=null; //Don't need it anymore, make it GC-able
+
+			if ((first_block) && (cipher != null))
+			{
+				byte[] out2 = out;
+
+				out = new byte[iv.length + out2.length];
+				ByteBuffer bb = ByteBuffer.wrap(out);
+				bb.put(iv);
+				bb.put(out2);
+				first_block=false;
 			}
 
-			PartETag tag = put(s3, bucket, file, upload_id, block_no, out);
-			parts.add(tag);
+			save_queue.put(new DataBlock(block_no, out));
+
+			//PartETag tag = put(s3, bucket, file, upload_id, block_no, out);
+			//parts.add(tag);
 
 			block_no++;
 		}
 
+		
+		LinkedList<PartETag> parts = new LinkedList<PartETag>();
+		for(int i=1; i<block_no; i++)
+		{
+			PartETag part = etags.getNextBlock();
+			parts.add(part);
+		}
+
 		CompleteMultipartUploadRequest complete_req = new CompleteMultipartUploadRequest(bucket, file, upload_id, parts);
-		String etag = s3.completeMultipartUpload(complete_req).getETag();
+		String etag = config.getS3Client().completeMultipartUpload(complete_req).getETag();
 
 		System.out.println("Uploaded with etag: " + etag);
+
+		for(S3StreamingUploadThread t : threads)
+		{
+			t.interrupt();
+			t.join();
+		}
 
 		
 
@@ -179,7 +259,7 @@ public class S3StreamingUpload
 
 	}
 
-    private static PartETag put(AmazonS3Client s3, String bucket, String name, String upload_id, int block_no, byte[] out)
+    protected static PartETag put(AmazonS3Client s3, String bucket, String name, String upload_id, int block_no, byte[] out)
     {  
 		int size = out.length;
 
