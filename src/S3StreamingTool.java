@@ -131,7 +131,7 @@ public class S3StreamingTool
 		if (cl.hasOption('z'))
 		{
 			config.setEncryption(true);
-			config.setSecretKey(Utils.loadSecretKey(cl.getOptionValue("e")));
+			config.setSecretKey(Utils.loadSecretKey(cl.getOptionValue("k")));
 		}
 
 		if (cl.hasOption("encryption-mode"))
